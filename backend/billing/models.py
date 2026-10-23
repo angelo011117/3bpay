@@ -50,3 +50,9 @@ class DevelopmentClock(models.Model):
     now=models.DateTimeField(null=True,blank=True); updated_at=models.DateTimeField(auto_now=True)
     @classmethod
     def current(cls): return cls.objects.get_or_create(pk=1)[0]
+class GraphSyncState(models.Model):
+    cursor=models.TextField(blank=True); last_attempt=models.DateTimeField(null=True,blank=True); last_success=models.DateTimeField(null=True,blank=True); last_message_id=models.CharField(max_length=255,blank=True); status=models.CharField(max_length=20,default='disabled'); error=models.TextField(blank=True)
+    @classmethod
+    def current(cls): return cls.objects.get_or_create(pk=1)[0]
+class GraphMessage(models.Model):
+    graph_id=models.CharField(max_length=255,unique=True); received_at=models.DateTimeField(); sender=models.CharField(max_length=254,blank=True); subject=models.CharField(max_length=500,blank=True); body_excerpt=models.TextField(blank=True); status=models.CharField(max_length=20,default='review'); error=models.TextField(blank=True); payment=models.OneToOneField(Payment,null=True,blank=True,on_delete=models.SET_NULL); created_at=models.DateTimeField(auto_now_add=True)
