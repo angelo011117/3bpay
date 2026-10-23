@@ -1,0 +1,1 @@
+export default function Nav(){return <nav className="flex flex-wrap gap-3 text-sm mb-6"><a href="/dashboard">Dashboard</a><a href="/manage">Manage</a><a href="/payments">Payments</a><a href="/operations">Operations</a><a href="/settings">Settings</a></nav>}
