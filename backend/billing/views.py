@@ -97,6 +97,13 @@ def session_login(request):
  user=authenticate(request,username=request.data.get('username',''),password=request.data.get('password',''))
  if not user:return Response({'detail':'Invalid credentials'},400)
  login(request,user);return Response({'ok':True})
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def session_status(request):
+ """Small same-origin session probe used by the private Next.js screens."""
+ if not request.user.is_authenticated:
+  return Response({'authenticated':False},401)
+ return Response({'authenticated':True,'username':request.user.get_username()})
 @api_view(['POST'])
 def session_logout(request): logout(request);return Response({'ok':True})
 @api_view(['GET'])

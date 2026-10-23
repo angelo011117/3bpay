@@ -5,6 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 from .models import *
 from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders
+from .amex_parser import parse_amex_zelle
 class BillingRulesTests(TestCase):
  def setUp(self):
   self.client=Client.objects.create(business_name='A',contact_name='A',email='a@example.test')
@@ -31,3 +32,7 @@ class BillingRulesTests(TestCase):
   c=self.charge();c.suspension_at=timezone.now()-timezone.timedelta(seconds=1);c.save();Payment.objects.create(amount=1,payer_name='A',recipient_account='q',client=self.client);schedule_actions();self.assertTrue(ProviderAction.objects.filter(service=self.service,status=ProviderAction.BLOCKED).exists())
  def test_no_reactivation_of_manual_pause(self):
   self.service.status=Service.SUSPENDED;self.service.save();schedule_actions();self.service.refresh_from_db();self.assertEqual(self.service.status,Service.SUSPENDED)
+ def test_real_amex_label_structure(self):
+  result=parse_amex_zelle('<p>Zelle payment has been deposited</p><p>Amount:</p><p>$125.50</p><p>From:</p><p>Example Payer</p><p>Account:</p><p>Account ending: 1234</p><p>Transaction ID:</p><p>ABC-123</p><p>To view this payment</p>');self.assertEqual(result['amount'],Decimal('125.50'));self.assertEqual(result['payer_name'],'Example Payer');self.assertEqual(result['recipient_account'],'1234')
+ def test_amex_missing_required_field_is_incident(self):
+  with self.assertRaises(ValueError):parse_amex_zelle('<p>Zelle payment has been deposited</p><p>Amount: $10</p>')
