@@ -2,6 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from django.test import TestCase,TransactionTestCase,override_settings
+from django.core.management import call_command
 import threading
 from django.db import close_old_connections
 from django.utils import timezone
@@ -40,6 +41,11 @@ class BillingRulesTests(TestCase):
   self.assertIn('https://pay.example.test/portal/',body)
   self.assertIn('View payment details',body)
   self.assertNotIn('Copy',body)
+ @override_settings(EMAIL_DELIVERY_MODE='disabled',MICROSOFT_GRAPH_ENABLED=False)
+ def test_disabled_delivery_keeps_outbox_pending_without_attempt(self):
+  c=self.charge();e=OutboxEmail.objects.create(recipient='a@example.test',template='due_today',subject='x',body='x',charge=c,dedupe_key='disabled-delivery')
+  call_command('run_scheduler')
+  e.refresh_from_db();self.assertEqual(e.status,OutboxEmail.PENDING);self.assertEqual(e.attempts,0);self.assertFalse(e.delivery_attempts.exists())
  def test_pending_linked_payment_blocks_suspension(self):
   c=self.charge();c.suspension_at=timezone.now()-timezone.timedelta(seconds=1);c.save();Payment.objects.create(amount=1,payer_name='A',recipient_account='q',client=self.client);schedule_actions();self.assertTrue(ProviderAction.objects.filter(service=self.service,status=ProviderAction.BLOCKED).exists())
  def test_no_reactivation_of_manual_pause(self):

@@ -19,6 +19,9 @@ def audit(request,action,obj,reason=''):
  AuditLog.objects.create(actor=request.user.username if request.user.is_authenticated else 'system',action=action,entity=obj.__class__.__name__,entity_id=str(obj.pk),reason=reason)
 def csrf_token(request): return request.headers.get('X-CSRFToken','')
 @api_view(['GET'])
+@permission_classes([AllowAny])
+def healthz(request): return Response({'ok':True})
+@api_view(['GET'])
 def dashboard(request):
  from django.db.models import Sum
  pending=Charge.objects.exclude(status__in=[Charge.PAID,Charge.VOID])

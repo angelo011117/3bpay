@@ -13,6 +13,7 @@ def _plain_body(body):
  return re.sub(r'<[^>]+>','',body or '')
 def health():
  mode=settings.EMAIL_DELIVERY_MODE
+ if mode=='disabled':return {'mode':mode,'healthy':True,'enabled':False,'detail':'Outbound delivery disabled; outbox is retained'}
  if mode=='mailpit':return {'mode':mode,'healthy':True,'detail':'Mailpit'}
  if mode not in {'graph_test','graph_live'}:return {'mode':mode,'healthy':False,'detail':'Unsupported mode'}
  if not settings.MICROSOFT_GRAPH_SENDER or not settings.PUBLIC_BASE_URL.startswith('https://'):return {'mode':mode,'healthy':False,'detail':'Sender and HTTPS public URL required'}
@@ -20,6 +21,7 @@ def health():
  return {'mode':mode,'healthy':True,'detail':'Configured'}
 def deliver(email):
  state=health()
+ if state['mode']=='disabled':raise RuntimeError('Outbound delivery is disabled')
  if not state['healthy']:raise ValueError(state['detail'])
  if state['mode']=='mailpit':
   message=EmailMultiAlternatives(email.subject,_plain_body(email.body),None,[email.recipient])

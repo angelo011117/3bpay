@@ -12,14 +12,20 @@ WSGI_APPLICATION='config.wsgi.application'
 DATABASES={'default':{'ENGINE':'django.db.backends.postgresql','NAME':os.getenv('POSTGRES_DB','threebpay'),'USER':os.getenv('POSTGRES_USER','threebpay'),'PASSWORD':os.getenv('POSTGRES_PASSWORD','threebpay'),'HOST':os.getenv('POSTGRES_HOST','db'),'PORT':os.getenv('POSTGRES_PORT','5432')}}
 AUTH_PASSWORD_VALIDATORS=[]
 LANGUAGE_CODE='en-us'; TIME_ZONE='America/New_York'; USE_I18N=True; USE_TZ=True
-STATIC_URL='/static/'; MEDIA_URL='/media/'; MEDIA_ROOT=BASE_DIR/'media'; DEFAULT_AUTO_FIELD='django.db.models.BigAutoField'
+STATIC_URL='/static/'; STATIC_ROOT=BASE_DIR/'staticfiles'; MEDIA_URL='/media/'; MEDIA_ROOT=BASE_DIR/'media'; DEFAULT_AUTO_FIELD='django.db.models.BigAutoField'
 EMAIL_HOST=os.getenv('EMAIL_HOST','mailpit'); EMAIL_PORT=int(os.getenv('EMAIL_PORT','1025')); EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend'; DEFAULT_FROM_EMAIL='billing@3bsmartsolutions.example'
 REST_FRAMEWORK={'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.IsAuthenticated'],'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework.authentication.SessionAuthentication']}
 CSRF_TRUSTED_ORIGINS=os.getenv('CSRF_TRUSTED_ORIGINS','http://localhost').split(',')
 SECURE_PROXY_SSL_HEADER=('HTTP_X_FORWARDED_PROTO','https')
 SESSION_COOKIE_SECURE=not DEBUG
 CSRF_COOKIE_SECURE=not DEBUG
-SECURE_SSL_REDIRECT=False
+SECURE_SSL_REDIRECT=os.getenv('SECURE_SSL_REDIRECT','false').lower()=='true'
+# The internal container health endpoint is never exposed by Docker or Nginx.
+# It must remain reachable over plain loopback while public traffic is HTTPS.
+SECURE_REDIRECT_EXEMPT=['api/healthz/']
+SECURE_HSTS_SECONDS=int(os.getenv('SECURE_HSTS_SECONDS','0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS=os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS','false').lower()=='true'
+SECURE_HSTS_PRELOAD=os.getenv('SECURE_HSTS_PRELOAD','false').lower()=='true'
 MICROSOFT_GRAPH_ENABLED=os.getenv('MICROSOFT_GRAPH_ENABLED','false').lower()=='true'
 MICROSOFT_GRAPH_TENANT_ID=os.getenv('MICROSOFT_GRAPH_TENANT_ID','')
 MICROSOFT_GRAPH_CLIENT_ID=os.getenv('MICROSOFT_GRAPH_CLIENT_ID','')
