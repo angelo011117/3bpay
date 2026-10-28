@@ -32,8 +32,10 @@ def request(url,data=None,token=None,extra_headers=None):
  headers={'Content-Type':'application/x-www-form-urlencoded'} if data else {}
  if token:headers={'Authorization':'Bearer '+token,'Accept':'application/json'}
  if extra_headers:headers.update(extra_headers)
- req=urllib.request.Request(url,data=urllib.parse.urlencode(data).encode() if data else None,headers=headers,method='POST' if data else 'GET')
- with urllib.request.urlopen(req,timeout=20) as r:return json.load(r)
+ payload=json.dumps(data).encode() if isinstance(data,(dict,list)) and extra_headers and extra_headers.get('Content-Type')=='application/json' else urllib.parse.urlencode(data).encode() if data else None
+ req=urllib.request.Request(url,data=payload,headers=headers,method='POST' if data else 'GET')
+ with urllib.request.urlopen(req,timeout=20) as r:
+  return json.load(r) if r.headers.get('Content-Type','').startswith('application/json') else {}
 def access_token():
  return request(f'https://login.microsoftonline.com/{settings.MICROSOFT_GRAPH_TENANT_ID}/oauth2/v2.0/token',{'client_id':settings.MICROSOFT_GRAPH_CLIENT_ID,'client_secret':settings.MICROSOFT_GRAPH_CLIENT_SECRET,'grant_type':'client_credentials','scope':'https://graph.microsoft.com/.default'})['access_token']
 def sync():

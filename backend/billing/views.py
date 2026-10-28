@@ -12,6 +12,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from .models import *
 from .services import apply_payment, suggestions, cancel_obsolete_reminders, business_now, schedule_actions
+from .services import suspension_blockers
+from .delivery import health as delivery_health
 def ser_charge(c): return {'id':c.id,'client':c.client.business_name,'description':c.description,'amount':str(c.amount),'balance':str(c.balance),'due_date':c.due_date,'status':c.status,'portal_token':c.portal_token}
 def audit(request,action,obj,reason=''):
  AuditLog.objects.create(actor=request.user.username if request.user.is_authenticated else 'system',action=action,entity=obj.__class__.__name__,entity_id=str(obj.pk),reason=reason)
@@ -110,6 +112,10 @@ def session_logout(request): logout(request);return Response({'ok':True})
 def reminders(request):return Response([{'id':e.id,'recipient':e.recipient,'template':e.template,'status':e.status,'attempts':e.attempts,'charge_id':e.charge_id,'sent_at':e.sent_at,'error':e.error}for e in OutboxEmail.objects.all().order_by('-id')])
 @api_view(['GET'])
 def actions(request):return Response([{'id':a.id,'service':a.service.name,'action':a.action,'status':a.status,'reason':a.reason,'created_at':a.created_at}for a in ProviderAction.objects.select_related('service').all().order_by('-id')])
+@api_view(['GET'])
+def integration_health(request):
+ from django.conf import settings
+ return Response({'graph_read':GraphSyncState.current().status,'delivery':delivery_health(),'vercel':{'enabled':settings.VERCEL_ENABLED,'mode':settings.VERCEL_MODE},'external_actions_enabled':BillingSettings.current().external_actions_enabled,'upcoming_suspensions':[{'charge_id':c.id,'blockers':suspension_blockers(c)} for c in Charge.objects.filter(status__in=[Charge.PENDING,Charge.PARTIAL]).select_related('service')][:50]})
 @api_view(['GET'])
 def audits(request):return Response([{'id':a.id,'actor':a.actor,'action':a.action,'entity':a.entity,'entity_id':a.entity_id,'reason':a.reason,'created_at':a.created_at}for a in AuditLog.objects.all().order_by('-id')])
 @api_view(['GET','PUT'])

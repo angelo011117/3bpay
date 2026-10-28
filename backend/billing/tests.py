@@ -1,10 +1,13 @@
 from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from django.test import TestCase
+from django.test import TestCase,TransactionTestCase
+import threading
+from django.db import close_old_connections
 from django.utils import timezone
 from .models import *
-from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders
+from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders, reconcile_vercel
+from .vercel import SimulatedProvider
 from .amex_parser import parse_amex_zelle
 class BillingRulesTests(TestCase):
  def setUp(self):
@@ -36,3 +39,21 @@ class BillingRulesTests(TestCase):
   result=parse_amex_zelle('<p>Zelle payment has been deposited</p><p>Amount:</p><p>$125.50</p><p>From:</p><p>Example Payer</p><p>Account:</p><p>Account ending: 1234</p><p>Transaction ID:</p><p>ABC-123</p><p>To view this payment</p>');self.assertEqual(result['amount'],Decimal('125.50'));self.assertEqual(result['payer_name'],'Example Payer');self.assertEqual(result['recipient_account'],'1234')
  def test_amex_missing_required_field_is_incident(self):
   with self.assertRaises(ValueError):parse_amex_zelle('<p>Zelle payment has been deposited</p><p>Amount: $10</p>')
+ def test_vercel_timeout_after_apply_reconciles_without_duplicate(self):
+  self.charge();self.service.vercel_project_id='prj_test';self.service.save();a=ProviderAction.objects.create(service=self.service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);p=SimulatedProvider(outcome='timeout_after');reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,'uncertain');p.outcome='success';reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.SUCCESS);self.assertEqual(p.calls.count('suspend'),1)
+ def test_vercel_failure_is_visible_and_recoverable(self):
+  self.service.vercel_project_id='prj_test2';self.service.save();a=ProviderAction.objects.create(service=self.service,action='resume',status=ProviderAction.PENDING);p=SimulatedProvider(state='suspended',outcome='failure');reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.FAILED);a.status=ProviderAction.PENDING;a.save();p.outcome='success';reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.SUCCESS)
+ def test_pending_action_recovers_on_later_reconciler_run(self):
+  self.charge();self.service.vercel_project_id='prj_later';self.service.save();a=ProviderAction.objects.create(service=self.service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);p=SimulatedProvider(state='suspended');reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.SUCCESS);self.assertEqual(p.calls,[])
+ def test_payment_clears_pending_pause_without_provider_call(self):
+  self.service.vercel_project_id='prj_paid';self.service.save();c=self.charge();c.status=Charge.PAID;c.save();a=ProviderAction.objects.create(service=self.service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);p=SimulatedProvider();reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.FAILED);self.assertEqual(p.calls,[])
+ def test_manual_pause_is_not_resumed(self):
+  self.service.status=Service.SUSPENDED;self.service.observed_state=Service.SUSPENDED;self.service.save();self.assertEqual(reconcile_vercel(SimulatedProvider(state='suspended')),[])
+class VercelConcurrencyTests(TransactionTestCase):
+ def test_two_reconcilers_claim_once(self):
+  client=Client.objects.create(business_name='C',contact_name='C',email='c@test');service=Service.objects.create(client=client,name='S',domain='s.test',amount=1,frequency='monthly',start_date=date(2024,1,1),next_due_date=date(2024,1,1),vercel_project_id='prj_concurrent');Charge.objects.create(service=service,client=client,description='S',period_start=date(2024,1,1),period_end=date(2024,1,31),amount=1,due_date=date(2024,1,1),suspension_at=timezone.now(),public_reference='CONCURRENT');action=ProviderAction.objects.create(service=service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);provider=SimulatedProvider();barrier=threading.Barrier(2)
+  def run():
+   close_old_connections();barrier.wait();reconcile_vercel(provider);close_old_connections()
+  one=threading.Thread(target=run);two=threading.Thread(target=run);one.start();two.start();one.join();two.join();action.refresh_from_db();self.assertEqual(provider.calls.count('suspend'),1);self.assertEqual(action.status,ProviderAction.SUCCESS)
+ def test_expired_claim_is_recovered_after_interruption(self):
+  client=Client.objects.create(business_name='R',contact_name='R',email='r@test');service=Service.objects.create(client=client,name='R',domain='r.test',amount=1,frequency='monthly',start_date=date(2024,1,1),next_due_date=date(2024,1,1),vercel_project_id='prj_recover');Charge.objects.create(service=service,client=client,description='R',period_start=date(2024,1,1),period_end=date(2024,1,31),amount=1,due_date=date(2024,1,1),suspension_at=timezone.now(),public_reference='RECOVER');a=ProviderAction.objects.create(service=service,action='suspend',status='in_progress',claimed_at=timezone.now()-timezone.timedelta(minutes=6),claim_token='dead');p=SimulatedProvider();reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.SUCCESS);self.assertEqual(p.calls,['suspend'])

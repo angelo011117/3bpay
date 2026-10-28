@@ -2,6 +2,12 @@
 
 Private maintenance-billing app. The UI and API are English-language; operational times are America/New_York and database timestamps are UTC. Vercel and Microsoft 365 are deliberately simulated/not connected.
 
+## Delivery and provider safety
+
+`EMAIL_DELIVERY_MODE=mailpit` is the default and sends only to Mailpit. `graph_test` requires an HTTPS `PUBLIC_BASE_URL`, `MICROSOFT_GRAPH_SENDER`, and a comma-separated `MICROSOFT_GRAPH_TEST_RECIPIENTS` allowlist; every recipient must be in that list. `graph_live` is deliberately not selected automatically. Graph acceptance only means that Microsoft Graph accepted the request, not that a recipient has delivered/read it. Assign `Application Mail.Send` through Exchange Application RBAC scoped to the sender mailbox; setting a sender address alone does not scope an application permission.
+
+Vercel remains `VERCEL_ENABLED=false` and `VERCEL_MODE=simulation`. Before any live action, set an explicit project ID on one service and validate it against a non-client test project. Do not use client projects for the first pause/resume test.
+
 ## Start
 
 1. In PowerShell: `Copy-Item .env.example .env` and replace the development values.
