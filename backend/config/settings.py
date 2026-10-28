@@ -38,6 +38,7 @@ EMAIL_DELIVERY_MODE=os.getenv('EMAIL_DELIVERY_MODE','mailpit')
 MICROSOFT_GRAPH_SENDER=os.getenv('MICROSOFT_GRAPH_SENDER','')
 MICROSOFT_GRAPH_TEST_RECIPIENTS={x.strip().lower() for x in os.getenv('MICROSOFT_GRAPH_TEST_RECIPIENTS','').split(',') if x.strip()}
 PUBLIC_BASE_URL=os.getenv('PUBLIC_BASE_URL','')
+PUBLIC_PORTAL_WRITES_ENABLED=os.getenv('PUBLIC_PORTAL_WRITES_ENABLED','true').lower()=='true'
 VERCEL_ENABLED=os.getenv('VERCEL_ENABLED','false').lower()=='true'
 VERCEL_MODE=os.getenv('VERCEL_MODE','simulation')
 VERCEL_TOKEN=os.getenv('VERCEL_TOKEN','')

@@ -89,6 +89,7 @@ def public_portal(request,token):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def public_claim(request,token):
+ if not settings.PUBLIC_PORTAL_WRITES_ENABLED:return Response({'detail':'Public payment submissions are temporarily unavailable.'},503)
  c=get_object_or_404(Charge,portal_token=token)
  if PublicPaymentClaim.objects.filter(charge=c,created_at__gte=timezone.now()-timezone.timedelta(hours=1)).count()>=3:return Response({'detail':'Try again later'},429)
  PublicPaymentClaim.objects.create(charge=c,payer_name=request.data.get('payer_name',''),note=request.data.get('note',''));return Response({'detail':'Thank you. Your payment remains pending verification.'})
