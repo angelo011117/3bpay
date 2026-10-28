@@ -1,2 +1,43 @@
-'use client';import{useEffect,useState}from'react';
-export default function Portal({params}){const[d,setD]=useState(),[token,setToken]=useState(),[n,setN]=useState('');useEffect(()=>{params.then(({token})=>{setToken(token);fetch(`/api/public/${token}/`).then(r=>r.json()).then(setD)})},[params]);if(!d)return <main className="p-8">Loading secure payment details…</main>;const copy=x=>navigator.clipboard.writeText(x);return <main className="max-w-xl mx-auto p-6"><div className="card"><h1 className="text-2xl font-bold">{d.brand}</h1><p>{d.description} · {d.domain}</p><hr/><p>Period: {d.period}</p><p>Amount: ${d.amount} · Balance: ${d.balance}</p><p>Due: {d.due_date} · Grace deadline: {d.grace_ends}</p>{d.qr_url?<><img className="max-w-56" src={d.qr_url} alt="Official American Express Zelle QR"/><a className="underline" href={d.qr_url} download>Download official QR</a></>:<p className="muted">No official QR has been uploaded. Use the Zelle contact below.</p>}<p>Send Zelle to: {d.zelle_recipient||'Contact 3B Smart Solutions'} <button className="underline" onClick={()=>copy(d.zelle_recipient)}>Copy contact</button></p><button className="underline" onClick={()=>copy(d.balance)}>Copy amount</button><input className="border p-2 w-full mt-3" placeholder="Payer name" value={n} onChange={e=>setN(e.target.value)}/><button className="btn mt-3" onClick={()=>fetch(`/api/public/${token}/claim/`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payer_name:n})}).then(()=>alert('Payment declaration received; verification is pending.'))}>I sent the payment</button></div></main>}
+'use client';
+
+import {useEffect,useState} from 'react';
+
+function CopyButton({label,value}){
+ const [message,setMessage]=useState('');
+ const copy=async()=>{
+  try{
+   if(!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable');
+   await navigator.clipboard.writeText(value);
+   setMessage('Copied');
+  }catch(error){
+   setMessage('Copy failed. Select the value and copy it manually.');
+  }
+ };
+ return <span className="inline-flex items-center gap-2">
+  <button type="button" className="copy-button" onClick={copy} aria-label={`Copy ${label}`} title={`Copy ${label}`}><span aria-hidden="true">⧉</span></button>
+  <span className="copy-status" role="status" aria-live="polite">{message}</span>
+ </span>;
+}
+
+function PaymentValue({label,value,copyValue}){
+ return <div className="payment-value">
+  <span className="payment-label">{label}</span>
+  <div className="flex items-center gap-2"><span className="payment-text" tabIndex="0">{value}</span><CopyButton label={label} value={copyValue}/></div>
+ </div>;
+}
+
+export default function Portal({params}){
+ const [details,setDetails]=useState();
+ useEffect(()=>{params.then(({token})=>fetch(`/api/public/${token}/`).then(response=>response.json()).then(setDetails))},[params]);
+ if(!details)return <main className="p-8">Loading secure payment details…</main>;
+ const contact=details.zelle_recipient||'Contact 3B Smart Solutions';
+ return <main className="max-w-xl mx-auto p-4 sm:p-6"><div className="card">
+  <h1 className="text-2xl font-bold">{details.brand}</h1><p>{details.description} · {details.domain}</p><hr className="my-4"/>
+  <p>Period: {details.period}</p>
+  <PaymentValue label="Amount" value={`$${details.amount}`} copyValue={String(details.amount)}/>
+  <PaymentValue label="Zelle contact" value={contact} copyValue={contact}/>
+  <p>Balance: ${details.balance}</p><p>Due: {details.due_date} · Grace deadline: {details.grace_ends}</p>
+  {details.qr_url?<><img className="max-w-56" src={details.qr_url} alt="Official American Express Zelle QR"/><a className="underline" href={details.qr_url} download>Download official QR</a></>:<p className="muted">No official QR has been uploaded. Use the Zelle contact above.</p>}
+  <p className="mt-5">Payments are detected automatically. Your balance will update after verification. You do not need to submit a payment confirmation.</p>
+ </div></main>;
+}

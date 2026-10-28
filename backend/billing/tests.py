@@ -1,12 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from django.test import TestCase,TransactionTestCase
+from django.test import TestCase,TransactionTestCase,override_settings
 import threading
 from django.db import close_old_connections
 from django.utils import timezone
 from .models import *
-from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders, reconcile_vercel
+from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders, reconcile_vercel, reminder_email_body
 from .vercel import SimulatedProvider
 from .amex_parser import parse_amex_zelle
 class BillingRulesTests(TestCase):
@@ -31,6 +31,15 @@ class BillingRulesTests(TestCase):
   c=self.charge();old=c.portal_token;c.portal_token='new-secure-token';c.save();self.assertFalse(Charge.objects.filter(portal_token=old).exists())
  def test_paid_charge_cancels_pending_reminders(self):
   c=self.charge();e=OutboxEmail.objects.create(recipient='a@example.test',template='due_today',subject='x',body='x',charge=c,dedupe_key='notice');cancel_obsolete_reminders(c);e.refresh_from_db();self.assertEqual(e.status,OutboxEmail.CANCELLED)
+ @override_settings(PUBLIC_BASE_URL='https://pay.example.test')
+ def test_reminder_email_has_labeled_values_and_https_portal_button(self):
+  c=self.charge();settings=BillingSettings.current();settings.zelle_contact='zelle@example.test';settings.save()
+  body=reminder_email_body(c)
+  self.assertIn('<strong>Amount:</strong> $100.00',body)
+  self.assertIn('<strong>Zelle contact:</strong> zelle@example.test',body)
+  self.assertIn('https://pay.example.test/portal/',body)
+  self.assertIn('View payment details',body)
+  self.assertNotIn('Copy',body)
  def test_pending_linked_payment_blocks_suspension(self):
   c=self.charge();c.suspension_at=timezone.now()-timezone.timedelta(seconds=1);c.save();Payment.objects.create(amount=1,payer_name='A',recipient_account='q',client=self.client);schedule_actions();self.assertTrue(ProviderAction.objects.filter(service=self.service,status=ProviderAction.BLOCKED).exists())
  def test_no_reactivation_of_manual_pause(self):

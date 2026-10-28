@@ -1,8 +1,16 @@
 """Explicit delivery modes; Graph test never exposes client recipients."""
+import re
 import urllib.error,urllib.parse
+from html import escape
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 from .graph import access_token,request
+
+def _html_body(body):
+ return body if re.search(r'<[a-z][^>]*>',body or '',re.I) else '<p>'+escape(body or '').replace('\n','<br>')+'</p>'
+
+def _plain_body(body):
+ return re.sub(r'<[^>]+>','',body or '')
 def health():
  mode=settings.EMAIL_DELIVERY_MODE
  if mode=='mailpit':return {'mode':mode,'healthy':True,'detail':'Mailpit'}
@@ -13,11 +21,15 @@ def health():
 def deliver(email):
  state=health()
  if not state['healthy']:raise ValueError(state['detail'])
- if state['mode']=='mailpit':send_mail(email.subject,email.body,None,[email.recipient]);return 'accepted_mailpit'
+ if state['mode']=='mailpit':
+  message=EmailMultiAlternatives(email.subject,_plain_body(email.body),None,[email.recipient])
+  message.attach_alternative(_html_body(email.body),'text/html')
+  message.send()
+  return 'accepted_mailpit'
  recipients=[email.recipient] if state['mode']=='graph_live' else sorted(settings.MICROSOFT_GRAPH_TEST_RECIPIENTS)
  subject=email.subject if state['mode']=='graph_live' else '[TEST - NOT DELIVERED TO CLIENT] '+email.subject
- body=email.body if state['mode']=='graph_live' else 'TEST DELIVERY. Intended client recipient is retained internally only.\n\n'+email.body
- payload={'message':{'subject':subject,'body':{'contentType':'Text','content':body},'toRecipients':[{'emailAddress':{'address':x}} for x in recipients]},'saveToSentItems':True}
+ body=_html_body(email.body) if state['mode']=='graph_live' else '<p><strong>TEST DELIVERY.</strong> Intended client recipient is retained internally only.</p>'+_html_body(email.body)
+ payload={'message':{'subject':subject,'body':{'contentType':'HTML','content':body},'toRecipients':[{'emailAddress':{'address':x}} for x in recipients]},'saveToSentItems':True}
  url='https://graph.microsoft.com/v1.0/users/'+urllib.parse.quote(settings.MICROSOFT_GRAPH_SENDER)+'/sendMail'
  try:request(url,data=payload,token=access_token(),extra_headers={'Content-Type':'application/json'})
  except urllib.error.HTTPError as e:raise RuntimeError('Graph rejected: HTTP '+str(e.code))

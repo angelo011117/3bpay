@@ -15,7 +15,11 @@ LANGUAGE_CODE='en-us'; TIME_ZONE='America/New_York'; USE_I18N=True; USE_TZ=True
 STATIC_URL='/static/'; MEDIA_URL='/media/'; MEDIA_ROOT=BASE_DIR/'media'; DEFAULT_AUTO_FIELD='django.db.models.BigAutoField'
 EMAIL_HOST=os.getenv('EMAIL_HOST','mailpit'); EMAIL_PORT=int(os.getenv('EMAIL_PORT','1025')); EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend'; DEFAULT_FROM_EMAIL='billing@3bsmartsolutions.example'
 REST_FRAMEWORK={'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.IsAuthenticated'],'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework.authentication.SessionAuthentication']}
-CSRF_TRUSTED_ORIGINS=['http://localhost']
+CSRF_TRUSTED_ORIGINS=os.getenv('CSRF_TRUSTED_ORIGINS','http://localhost').split(',')
+SECURE_PROXY_SSL_HEADER=('HTTP_X_FORWARDED_PROTO','https')
+SESSION_COOKIE_SECURE=not DEBUG
+CSRF_COOKIE_SECURE=not DEBUG
+SECURE_SSL_REDIRECT=False
 MICROSOFT_GRAPH_ENABLED=os.getenv('MICROSOFT_GRAPH_ENABLED','false').lower()=='true'
 MICROSOFT_GRAPH_TENANT_ID=os.getenv('MICROSOFT_GRAPH_TENANT_ID','')
 MICROSOFT_GRAPH_CLIENT_ID=os.getenv('MICROSOFT_GRAPH_CLIENT_ID','')

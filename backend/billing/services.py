@@ -1,14 +1,35 @@
 import secrets
 import uuid
+from html import escape
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from django.db import transaction
 from django.db.models import Q
+from django.conf import settings
 from django.utils import timezone
 from .models import *
 NY=ZoneInfo('America/New_York')
+
+def reminder_email_body(charge):
+    """Safe, client-friendly HTML for a payment reminder.
+
+    The payment portal is the only interactive control in the email: copying is
+    deliberately left to the portal, where it can be implemented accessibly.
+    """
+    billing=BillingSettings.current()
+    contact=billing.zelle_contact or 'Contact 3B Smart Solutions'
+    base=settings.PUBLIC_BASE_URL.rstrip('/')
+    url=f'{base}/portal/{charge.portal_token}'
+    return (
+        f'<p><strong>Amount:</strong> ${charge.balance:.2f}</p>'
+        f'<p><strong>Zelle contact:</strong> {escape(contact)}</p>'
+        '<p><a href="'+escape(url, quote=True)+'" '
+        'style="display:inline-block;background:#1677c8;color:#ffffff;'
+        'padding:10px 16px;border-radius:6px;text-decoration:none;">'
+        'View payment details</a></p>'
+    )
 def business_now():
     """Only development/tests may override time; production always uses the real UTC clock."""
     from django.conf import settings
@@ -117,6 +138,6 @@ def schedule_reminders(now=None):
         if today==c.suspension_at.astimezone(NY).date()-timedelta(days=1):template='last_notice'
         if not template:continue
         key=f'{c.id}:{template}'
-        _,created=OutboxEmail.objects.get_or_create(dedupe_key=key,defaults={'recipient':c.client.email,'template':template,'subject':'3B Smart Solutions billing reminder','body':f'View and pay your charge at /portal/{c.portal_token}','charge':c})
+        _,created=OutboxEmail.objects.get_or_create(dedupe_key=key,defaults={'recipient':c.client.email,'template':template,'subject':'3B Smart Solutions billing reminder','body':reminder_email_body(c),'charge':c})
         made+=int(created)
     return made
