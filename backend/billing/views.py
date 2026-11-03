@@ -1,4 +1,6 @@
 import secrets
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import IntegrityError
@@ -25,7 +27,7 @@ def healthz(request): return Response({'ok':True})
 def dashboard(request):
  from django.db.models import Sum
  pending=Charge.objects.exclude(status__in=[Charge.PAID,Charge.VOID])
- return Response({'confirmed_month':str(Payment.objects.filter(status=Payment.CONFIRMED,received_at__month=timezone.now().month).aggregate(v=Sum('amount'))['v'] or 0),'pending_balance':str(sum((c.balance for c in pending),0)),'overdue_balance':str(sum((c.balance for c in pending.filter(due_date__lt=timezone.localdate())),0)),'in_grace':Service.objects.filter(status=Service.ACTIVE).count(),'suspended':Service.objects.filter(status=Service.SUSPENDED).count(),'payments_review':Payment.objects.filter(status=Payment.REVIEW).count(),'simulation_mode':True})
+ return Response({'confirmed_month':str(Payment.objects.filter(status=Payment.CONFIRMED,received_at__month=timezone.now().month).aggregate(v=Sum('amount'))['v'] or 0),'pending_balance':str(sum((c.balance for c in pending),0)),'overdue_balance':str(sum((c.balance for c in pending.filter(due_date__lt=timezone.localdate())),0)),'in_grace':Service.objects.filter(status=Service.ACTIVE).count(),'suspended':Service.objects.filter(status=Service.SUSPENDED).count(),'payments_review':Payment.objects.filter(status=Payment.REVIEW).count(),'simulation_mode':not (settings.VERCEL_ENABLED and settings.VERCEL_MODE=='live')})
 @api_view(['GET','POST'])
 def clients(request):
  if request.method=='GET': return Response([{'id':x.id,'business_name':x.business_name,'contact_name':x.contact_name,'email':x.email,'active':x.active} for x in Client.objects.all()])
@@ -47,7 +49,24 @@ def aliases(request,client_id,pk=None):
 @api_view(['GET','POST'])
 def services(request):
  if request.method=='GET': return Response([{'id':x.id,'name':x.name,'client':x.client.business_name,'domain':x.domain,'amount':str(x.amount),'next_due_date':x.next_due_date,'status':x.status} for x in Service.objects.select_related('client')])
- data=request.data.copy(); x=Service.objects.create(**data); return Response({'id':x.id},201)
+ data=request.data
+ required=('client','name','domain','amount','frequency','start_date')
+ missing=[field for field in required if not str(data.get(field,'')).strip()]
+ if missing:return Response({'detail':'Complete all required service fields.','fields':missing},400)
+ if data.get('frequency') not in {Service.MONTHLY,Service.SEMIANNUAL,Service.YEARLY}:
+  return Response({'detail':'Billing frequency must be monthly, semiannual, or yearly.','fields':['frequency']},400)
+ try:
+  client=Client.objects.get(pk=int(data['client']))
+  amount=Decimal(str(data['amount']))
+  start_date=date.fromisoformat(str(data['start_date']))
+  next_due_date=date.fromisoformat(str(data.get('next_due_date') or data['start_date']))
+  if amount<=0:raise ValueError
+ except Client.DoesNotExist:return Response({'detail':'Select a saved client.','fields':['client']},400)
+ except (ValueError,TypeError,InvalidOperation):return Response({'detail':'Use a valid amount greater than zero and dates in YYYY-MM-DD format.','fields':['amount','start_date','next_due_date']},400)
+ if not client.active:return Response({'detail':'Select an active client or reactivate the selected client first.','fields':['client']},400)
+ x=Service.objects.create(client=client,name=str(data['name']).strip(),domain=str(data['domain']).strip(),amount=amount,frequency=data['frequency'],start_date=start_date,next_due_date=next_due_date)
+ audit(request,'service.created',x)
+ return Response({'id':x.id},201)
 @api_view(['GET','PATCH'])
 def service_detail(request,pk):
  x=get_object_or_404(Service,pk=pk)
@@ -142,4 +161,6 @@ def development_clock(request):
  return Response({'now':c.now,'effective_now':business_now()})
 @api_view(['POST'])
 def simulate_actions(request):
- result=schedule_actions();return Response({'actions':len(result),'simulation_mode':True})
+ if settings.VERCEL_ENABLED and settings.VERCEL_MODE=='live':
+  return Response({'detail':'Simulation actions are unavailable while Vercel live mode is enabled.'},409)
+ result=schedule_actions(simulation=True);return Response({'actions':len(result),'simulation_mode':True})

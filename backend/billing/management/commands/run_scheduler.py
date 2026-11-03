@@ -2,18 +2,18 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from billing.models import SchedulerRun, OutboxEmail, OutboxAttempt
 from billing.services import generate_charges, schedule_actions, schedule_reminders, reconcile_vercel
-from billing.vercel import SimulatedProvider
+from billing.vercel import provider_for_settings, configured
 from billing.delivery import deliver
 from billing.graph import sync as graph_sync
 class Command(BaseCommand):
- help='Run idempotent billing scheduler (simulation provider only)'
+ help='Run idempotent billing scheduler.'
  def handle(self,*args,**opts):
   from django.db import connection
   # PostgreSQL advisory lock prevents overlapping scheduler processes. It has no business effect if unavailable.
   with connection.cursor() as cursor:
    cursor.execute("SELECT pg_try_advisory_lock(3303001)"); locked=cursor.fetchone()[0]
   if not locked:self.stdout.write('Scheduler already running');return
-  run=SchedulerRun.objects.create(); graph_result=graph_sync(); reconciled=reconcile_vercel(SimulatedProvider()); made=generate_charges(); reminders=schedule_reminders(); actions=schedule_actions()
+  run=SchedulerRun.objects.create(); graph_result=graph_sync(); made=generate_charges(); reminders=schedule_reminders(); provider=provider_for_settings(); actions=schedule_actions(simulation=not configured()); reconciled=reconcile_vercel(provider)
   from django.conf import settings
   delivery_note='outbox disabled; pending messages retained'
   if settings.EMAIL_DELIVERY_MODE!='disabled':

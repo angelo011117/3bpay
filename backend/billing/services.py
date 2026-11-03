@@ -87,19 +87,34 @@ def suspension_blockers(charge,now=None):
     if not OutboxEmail.objects.filter(charge=charge,template='last_notice',status=OutboxEmail.SENT,sent_at__lte=now-timedelta(hours=24)).exists():blockers.append('Final notice was not accepted 24 hours before suspension')
     if not s.vercel_project_id:blockers.append('No Vercel project is linked')
     return blockers
-def schedule_actions(now=None):
+def schedule_actions(now=None, simulation=True):
     now=now or business_now(); result=[]
     for c in Charge.objects.filter(status__in=[Charge.PENDING,Charge.PARTIAL],suspension_at__lte=now).select_related('service','client'):
         s=c.service
         if s.status!=Service.ACTIVE: continue
         blockers=suspension_blockers(c,now)
         if blockers: ProviderAction.objects.update_or_create(service=s,action='suspend',status=ProviderAction.BLOCKED,defaults={'reason':'; '.join(blockers)});continue
-        a,_=ProviderAction.objects.get_or_create(service=s,action='suspend',status=ProviderAction.PENDING)
-        a.status=ProviderAction.SUCCESS; a.reason='Simulation mode: provider confirmed pause'; a.system_suspension=True; a.completed_at=now; a.save(); s.status=Service.SUSPENDED; s.desired_state=Service.SUSPENDED; s.observed_state=Service.SUSPENDED; s.save(); result.append(a)
+        active_action=ProviderAction.objects.filter(service=s,action='suspend',status__in=[ProviderAction.PENDING,'in_progress','uncertain']).first()
+        if active_action: continue
+        a=ProviderAction.objects.create(service=s,action='suspend',status=ProviderAction.PENDING,system_suspension=True)
+        if simulation:
+            a.status=ProviderAction.SUCCESS; a.reason='Simulation mode: provider confirmed pause'; a.completed_at=now; a.save()
+            s.status=Service.SUSPENDED; s.desired_state=Service.SUSPENDED; s.observed_state=Service.SUSPENDED; s.save()
+        else:
+            s.desired_state=Service.SUSPENDED; s.save(update_fields=['desired_state'])
+        result.append(a)
     for s in Service.objects.filter(status=Service.SUSPENDED):
         if not ProviderAction.objects.filter(service=s,action='suspend',status=ProviderAction.SUCCESS,system_suspension=True).exists(): continue
         if not Charge.objects.filter(service=s,status__in=[Charge.PENDING,Charge.PARTIAL]).exists():
-            a=ProviderAction.objects.create(service=s,action='resume',status=ProviderAction.SUCCESS,reason='Simulation mode: provider confirmed resume',completed_at=now); s.status=Service.ACTIVE;s.desired_state=Service.ACTIVE;s.observed_state=Service.ACTIVE;s.save();result.append(a)
+            active_action=ProviderAction.objects.filter(service=s,action='resume',status__in=[ProviderAction.PENDING,'in_progress','uncertain']).first()
+            if active_action: continue
+            a=ProviderAction.objects.create(service=s,action='resume',status=ProviderAction.PENDING)
+            if simulation:
+                a.status=ProviderAction.SUCCESS;a.reason='Simulation mode: provider confirmed resume';a.completed_at=now;a.save()
+                s.status=Service.ACTIVE;s.desired_state=Service.ACTIVE;s.observed_state=Service.ACTIVE;s.save()
+            else:
+                s.desired_state=Service.ACTIVE;s.save(update_fields=['desired_state'])
+            result.append(a)
     return result
 def reconcile_vercel(provider):
     """Recover pending/uncertain actions by observing before any repeat."""
@@ -116,13 +131,21 @@ def reconcile_vercel(provider):
         service=action.service; observed=provider.observe(service.vercel_project_id)
         if action.action=='suspend' and not Charge.objects.filter(service=service,status__in=[Charge.PENDING,Charge.PARTIAL]).exists():
             action.status=ProviderAction.FAILED;action.reason='Obsolete suspension: payment cleared overdue balance';action.save();service.desired_state=Service.ACTIVE;service.status=Service.ACTIVE;service.observed_state=observed;service.save();result.append(action);continue
+        if observed not in (Service.ACTIVE,Service.SUSPENDED):
+            ProviderAction.objects.filter(pk=action.pk,claim_token=token,status='in_progress').update(status='uncertain',reason='Provider state is unknown; observation required before retry')
+            result.append(action);continue
         service.observed_state=observed;service.save(update_fields=['observed_state'])
         target=Service.SUSPENDED if action.action=='suspend' else Service.ACTIVE
         if observed==target:
             ProviderAction.objects.filter(pk=action.pk,claim_token=token,status='in_progress').update(status=ProviderAction.SUCCESS,completed_at=timezone.now(),reason='Reconciled observed state');service.status=target;service.save(update_fields=['status']);result.append(action);continue
         try:
             provider.change(service.vercel_project_id,action.action)
-            ProviderAction.objects.filter(pk=action.pk,claim_token=token,status='in_progress').update(status=ProviderAction.SUCCESS,completed_at=timezone.now(),reason='Provider confirmed');service.status=target;service.desired_state=target;service.observed_state=target;service.save()
+            # A live provider only acknowledges a mutation.  It is left pending
+            # until a subsequent observation confirms the desired state.
+            if getattr(provider,'is_live',False):
+                ProviderAction.objects.filter(pk=action.pk,claim_token=token,status='in_progress').update(status='uncertain',reason='Provider accepted request; observation required before completion')
+            else:
+                ProviderAction.objects.filter(pk=action.pk,claim_token=token,status='in_progress').update(status=ProviderAction.SUCCESS,completed_at=timezone.now(),reason='Provider confirmed');service.status=target;service.desired_state=target;service.observed_state=target;service.save()
         except TimeoutError:
             ProviderAction.objects.filter(pk=action.pk,claim_token=token,status='in_progress').update(status='uncertain',reason='Timeout; observation required before retry')
         except Exception as error:

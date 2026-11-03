@@ -1,14 +1,15 @@
 from datetime import date, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from django.test import TestCase,TransactionTestCase,override_settings
+from django.test import TestCase,TransactionTestCase,override_settings,Client as HttpClient
 from django.core.management import call_command
 import threading
 from django.db import close_old_connections
 from django.utils import timezone
 from .models import *
 from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders, reconcile_vercel, reminder_email_body
-from .vercel import SimulatedProvider
+from .vercel import SimulatedProvider, VercelProvider
+from unittest.mock import patch
 from .amex_parser import parse_amex_zelle
 class BillingRulesTests(TestCase):
  def setUp(self):
@@ -69,6 +70,23 @@ class BillingRulesTests(TestCase):
   self.service.vercel_project_id='prj_paid';self.service.save();c=self.charge();c.status=Charge.PAID;c.save();a=ProviderAction.objects.create(service=self.service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);p=SimulatedProvider();reconcile_vercel(p);a.refresh_from_db();self.assertEqual(a.status,ProviderAction.FAILED);self.assertEqual(p.calls,[])
  def test_manual_pause_is_not_resumed(self):
   self.service.status=Service.SUSPENDED;self.service.observed_state=Service.SUSPENDED;self.service.save();self.assertEqual(reconcile_vercel(SimulatedProvider(state='suspended')),[])
+ def test_live_vercel_provider_only_classifies_explicit_pause_state(self):
+  with patch('billing.vercel.project',return_value={'paused':False}):self.assertEqual(VercelProvider().observe('prj'),Service.ACTIVE)
+  with patch('billing.vercel.project',return_value={'paused':True}):self.assertEqual(VercelProvider().observe('prj'),Service.SUSPENDED)
+  with patch('billing.vercel.project',return_value={'id':'prj'}):self.assertIsNone(VercelProvider().observe('prj'))
+ def test_live_scheduler_queues_without_simulating_pause(self):
+  c=self.charge();c.suspension_at=timezone.now()-timezone.timedelta(seconds=1);c.save();self.service.vercel_project_id='prj_live';self.service.save()
+  settings=BillingSettings.current();settings.external_actions_enabled=True;settings.save()
+  GraphSyncState.current().status='healthy';GraphSyncState.current().save()
+  OutboxEmail.objects.create(recipient='a@example.test',template='last_notice',subject='x',body='x',charge=c,status=OutboxEmail.SENT,sent_at=timezone.now()-timezone.timedelta(hours=25),dedupe_key='last-live')
+  schedule_actions(simulation=False);self.service.refresh_from_db()
+  self.assertEqual(self.service.status,Service.ACTIVE);self.assertEqual(self.service.desired_state,Service.SUSPENDED)
+  self.assertTrue(ProviderAction.objects.filter(service=self.service,action='suspend',status=ProviderAction.PENDING).exists())
+ def test_service_endpoint_accepts_selected_client_identifier(self):
+  http=HttpClient();http.force_login(__import__('django').contrib.auth.get_user_model().objects.create_user('manager','manager@example.test','safe-password'))
+  response=http.post('/api/services/',{'client':str(self.service.client_id),'name':'New service','domain':'new.example.test','amount':'20.00','frequency':'semiannual','start_date':'2026-01-01','next_due_date':'2026-01-01'},content_type='application/json')
+  self.assertEqual(response.status_code,201)
+  self.assertTrue(Service.objects.filter(name='New service',client=self.service.client,frequency=Service.SEMIANNUAL).exists())
 class VercelConcurrencyTests(TransactionTestCase):
  def test_two_reconcilers_claim_once(self):
   client=Client.objects.create(business_name='C',contact_name='C',email='c@test');service=Service.objects.create(client=client,name='S',domain='s.test',amount=1,frequency='monthly',start_date=date(2024,1,1),next_due_date=date(2024,1,1),vercel_project_id='prj_concurrent');Charge.objects.create(service=service,client=client,description='S',period_start=date(2024,1,1),period_end=date(2024,1,31),amount=1,due_date=date(2024,1,1),suspension_at=timezone.now(),public_reference='CONCURRENT');action=ProviderAction.objects.create(service=service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);provider=SimulatedProvider();barrier=threading.Barrier(2)
