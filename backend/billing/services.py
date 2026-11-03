@@ -49,10 +49,13 @@ def charge_status(charge):
     b=charge.balance
     return Charge.PAID if b<=0 else Charge.PARTIAL if b<charge.amount else Charge.PENDING
 def generate_charges(now=None):
-    today=(now or business_now()).astimezone(NY).date(); count=0
+    # Charges are created seven calendar days before the due date.  That gives
+    # the reminder scheduler a real charge to notify about at the promised
+    # seven-day point, while preserving the original due date and billing anchor.
+    today=(now or business_now()).astimezone(NY).date(); horizon=today+timedelta(days=7); count=0
     for s in Service.objects.exclude(status=Service.CANCELLED):
         due=s.next_due_date
-        if due>today: continue
+        if due>horizon: continue
         with transaction.atomic():
             months=billing_cycle_months(s)
             c, made=Charge.objects.get_or_create(service=s,period_start=due,defaults={'client':s.client,'description':s.name,'period_end':add_months(due,months)-timedelta(days=1),'amount':s.amount,'due_date':due,'suspension_at':suspension_time(due,s.grace_days),'public_reference':secrets.token_hex(8).upper()})
@@ -60,6 +63,34 @@ def generate_charges(now=None):
             # Preserve the original calendar anchor: the next date derives from the prior due date, never payment date.
             s.next_due_date=add_months(due,months); s.save(update_fields=['next_due_date'])
     return count
+def issue_recovery_notice(charge,now=None):
+    """Start a fresh, auditable seven-full-day grace window for an old charge.
+
+    This is intentionally an explicit administrative action, never a catch-up
+    side effect of the scheduler.  The original due date and financial record
+    remain unchanged.
+    """
+    if charge.status not in (Charge.PENDING,Charge.PARTIAL):
+        raise ValueError('A recovery notice can only be issued for an unpaid charge')
+    local_now=(now or business_now()).astimezone(NY)
+    grace_until=local_now.date()+timedelta(days=7)
+    service=charge.service
+    service.suspension_exempt_until=grace_until
+    service.exemption_reason='Recovery grace issued for overdue charge #{0}'.format(charge.id)
+    service.save(update_fields=['suspension_exempt_until','exemption_reason'])
+    key='{}:recovery_grace:{}'.format(charge.id,local_now.date().isoformat())
+    email,created=OutboxEmail.objects.get_or_create(
+        dedupe_key=key,
+        defaults={
+            'recipient':charge.client.email,
+            'template':'recovery_grace',
+            'subject':'Action required: seven-day payment grace period',
+            'body':('<p>Your overdue balance has been given a new seven-day grace period through '
+                    '<strong>{}</strong>. Please complete payment before then to avoid service suspension.</p>{}'.format(grace_until,reminder_email_body(charge))),
+            'charge':charge,
+        },
+    )
+    return email,created,grace_until
 def apply_payment(payment, charge, amount):
     amount=Decimal(str(amount))
     with transaction.atomic():

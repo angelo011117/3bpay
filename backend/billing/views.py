@@ -13,7 +13,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from .models import *
-from .services import apply_payment, suggestions, cancel_obsolete_reminders, business_now, schedule_actions
+from .services import apply_payment, suggestions, cancel_obsolete_reminders, business_now, schedule_actions, issue_recovery_notice
 from .services import suspension_blockers
 from .delivery import health as delivery_health
 def ser_charge(c): return {'id':c.id,'client':c.client.business_name,'description':c.description,'amount':str(c.amount),'balance':str(c.balance),'due_date':c.due_date,'status':c.status,'portal_token':c.portal_token}
@@ -37,7 +37,8 @@ def client_detail(request,pk):
  x=get_object_or_404(Client,pk=pk)
  if request.method=='GET': return Response({'id':x.id,'business_name':x.business_name,'contact_name':x.contact_name,'email':x.email,'phone':x.phone,'active':x.active,'notes':x.notes,'aliases':[{'id':a.id,'name':a.name}for a in x.aliases.all()],'services':[{'id':s.id,'name':s.name,'domain':s.domain,'status':s.status}for s in x.services.all()]})
  if request.method=='DELETE':x.delete();return Response(status=204)
- for k,v in request.data.items():setattr(x,k,v)
+ for k,v in request.data.items():
+  if k!='vercel_project_id':setattr(x,k,v)
  x.save();audit(request,'client.updated',x);return Response({'id':x.id})
 @api_view(['POST','PATCH','DELETE'])
 def aliases(request,client_id,pk=None):
@@ -64,13 +65,22 @@ def services(request):
  except Client.DoesNotExist:return Response({'detail':'Select a saved client.','fields':['client']},400)
  except (ValueError,TypeError,InvalidOperation):return Response({'detail':'Use a valid amount greater than zero and dates in YYYY-MM-DD format.','fields':['amount','start_date','next_due_date']},400)
  if not client.active:return Response({'detail':'Select an active client or reactivate the selected client first.','fields':['client']},400)
- x=Service.objects.create(client=client,name=str(data['name']).strip(),domain=str(data['domain']).strip(),amount=amount,frequency=data['frequency'],start_date=start_date,next_due_date=next_due_date)
+ project_id=str(data.get('vercel_project_id','')).strip() or None
+ project_name=str(data.get('vercel_project_name','')).strip()
+ if project_id and Service.objects.filter(vercel_project_id=project_id).exists():
+  return Response({'detail':'This Vercel Project ID is already linked to another service.','fields':['vercel_project_id']},400)
+ x=Service.objects.create(client=client,name=str(data['name']).strip(),domain=str(data['domain']).strip(),amount=amount,frequency=data['frequency'],start_date=start_date,next_due_date=next_due_date,vercel_project_id=project_id,vercel_project_name=project_name)
  audit(request,'service.created',x)
  return Response({'id':x.id},201)
 @api_view(['GET','PATCH'])
 def service_detail(request,pk):
  x=get_object_or_404(Service,pk=pk)
- if request.method=='GET':return Response({'id':x.id,'client_id':x.client_id,'name':x.name,'domain':x.domain,'amount':str(x.amount),'frequency':x.frequency,'start_date':x.start_date,'next_due_date':x.next_due_date,'grace_days':x.grace_days,'status':x.status,'automation_enabled':x.automation_enabled,'suspension_exempt_until':x.suspension_exempt_until,'exemption_reason':x.exemption_reason,'desired_state':x.desired_state,'observed_state':x.observed_state})
+ if request.method=='GET':return Response({'id':x.id,'client_id':x.client_id,'name':x.name,'domain':x.domain,'amount':str(x.amount),'frequency':x.frequency,'start_date':x.start_date,'next_due_date':x.next_due_date,'grace_days':x.grace_days,'status':x.status,'automation_enabled':x.automation_enabled,'suspension_exempt_until':x.suspension_exempt_until,'exemption_reason':x.exemption_reason,'desired_state':x.desired_state,'observed_state':x.observed_state,'vercel_project_id':x.vercel_project_id or '','vercel_project_name':x.vercel_project_name})
+ if 'vercel_project_id' in request.data:
+  project_id=str(request.data.get('vercel_project_id') or '').strip() or None
+  if project_id and Service.objects.exclude(pk=x.pk).filter(vercel_project_id=project_id).exists():
+   return Response({'detail':'This Vercel Project ID is already linked to another service.'},400)
+  x.vercel_project_id=project_id
  for k,v in request.data.items():setattr(x,k,v)
  x.save();audit(request,'service.updated',x);return Response({'id':x.id})
 @api_view(['POST'])
@@ -84,6 +94,14 @@ def charge_detail(request,pk):
  if request.method=='POST':
   c.status=Charge.VOID;c.void_reason=request.data.get('reason','');c.save();audit(request,'charge.voided',c,c.void_reason);return Response({'ok':True})
  return Response({**ser_charge(c),'period_start':c.period_start,'period_end':c.period_end,'suspension_at':c.suspension_at,'public_reference':c.public_reference,'history':[{'action':x.action,'reason':x.reason,'at':x.created_at} for x in AuditLog.objects.filter(entity='Charge',entity_id=str(c.pk))]})
+@api_view(['POST'])
+def charge_recovery_notice(request,pk):
+ c=get_object_or_404(Charge.objects.select_related('service','client'),pk=pk)
+ try:
+  email,created,grace_until=issue_recovery_notice(c)
+ except ValueError as error:return Response({'detail':str(error)},400)
+ audit(request,'charge.recovery_notice',c,'Recovery grace through '+str(grace_until))
+ return Response({'created':created,'grace_until':grace_until,'outbox_id':email.id})
 @api_view(['GET','POST'])
 def payments(request):
  if request.method=='GET': return Response([{'id':p.id,'amount':str(p.amount),'payer_name':p.payer_name,'status':p.status,'transaction_id':p.transaction_id,'suggestion':suggestions(p)} for p in Payment.objects.all()])

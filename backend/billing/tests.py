@@ -7,7 +7,7 @@ import threading
 from django.db import close_old_connections
 from django.utils import timezone
 from .models import *
-from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders, reconcile_vercel, reminder_email_body
+from .services import suspension_time, apply_payment, suggestions, generate_charges, schedule_actions, cancel_obsolete_reminders, reconcile_vercel, reminder_email_body, schedule_reminders, issue_recovery_notice
 from .vercel import SimulatedProvider, VercelProvider
 from unittest.mock import patch
 from .amex_parser import parse_amex_zelle
@@ -24,6 +24,12 @@ class BillingRulesTests(TestCase):
   generate_charges(timezone.make_aware(datetime(2024,2,1),ZoneInfo('America/New_York')))
   charge=Charge.objects.get(service=self.service);self.service.refresh_from_db()
   self.assertEqual(charge.period_end,date(2024,7,30));self.assertEqual(self.service.next_due_date,date(2024,7,31))
+ def test_charge_is_created_in_time_for_seven_day_notice(self):
+  self.service.next_due_date=date(2026,11,10);self.service.save()
+  now=timezone.make_aware(datetime(2026,11,3,9),ZoneInfo('America/New_York'))
+  self.assertEqual(generate_charges(now),1)
+  self.assertEqual(schedule_reminders(now),1)
+  self.assertTrue(OutboxEmail.objects.filter(template='seven_days_before').exists())
  def test_grace_is_seven_complete_days_across_dst(self):
   self.assertEqual(suspension_time(date(2024,3,10),7),timezone.make_aware(datetime(2024,3,18),ZoneInfo('America/New_York')))
  def test_partial_payment_cannot_overallocate(self):
@@ -38,6 +44,10 @@ class BillingRulesTests(TestCase):
   c=self.charge();old=c.portal_token;c.portal_token='new-secure-token';c.save();self.assertFalse(Charge.objects.filter(portal_token=old).exists())
  def test_paid_charge_cancels_pending_reminders(self):
   c=self.charge();e=OutboxEmail.objects.create(recipient='a@example.test',template='due_today',subject='x',body='x',charge=c,dedupe_key='notice');cancel_obsolete_reminders(c);e.refresh_from_db();self.assertEqual(e.status,OutboxEmail.CANCELLED)
+ def test_recovery_notice_creates_one_email_and_new_full_grace_window(self):
+  c=self.charge();now=timezone.make_aware(datetime(2026,11,3,10),ZoneInfo('America/New_York'))
+  email,created,until=issue_recovery_notice(c,now);self.assertTrue(created);self.assertEqual(until,date(2026,11,10));self.assertEqual(email.template,'recovery_grace')
+  again,created_again,_=issue_recovery_notice(c,now);self.assertFalse(created_again);self.assertEqual(again.id,email.id)
  @override_settings(PUBLIC_BASE_URL='https://pay.example.test')
  def test_reminder_email_has_labeled_values_and_https_portal_button(self):
   c=self.charge();settings=BillingSettings.current();settings.zelle_contact='zelle@example.test';settings.save()
@@ -84,9 +94,14 @@ class BillingRulesTests(TestCase):
   self.assertTrue(ProviderAction.objects.filter(service=self.service,action='suspend',status=ProviderAction.PENDING).exists())
  def test_service_endpoint_accepts_selected_client_identifier(self):
   http=HttpClient();http.force_login(__import__('django').contrib.auth.get_user_model().objects.create_user('manager','manager@example.test','safe-password'))
-  response=http.post('/api/services/',{'client':str(self.service.client_id),'name':'New service','domain':'new.example.test','amount':'20.00','frequency':'semiannual','start_date':'2026-01-01','next_due_date':'2026-01-01'},content_type='application/json')
+  response=http.post('/api/services/',{'client':str(self.service.client_id),'name':'New service','domain':'new.example.test','amount':'20.00','frequency':'semiannual','start_date':'2026-01-01','next_due_date':'2026-01-01','vercel_project_id':'prj_new','vercel_project_name':'new-project'},content_type='application/json')
   self.assertEqual(response.status_code,201)
-  self.assertTrue(Service.objects.filter(name='New service',client=self.service.client,frequency=Service.SEMIANNUAL).exists())
+  self.assertTrue(Service.objects.filter(name='New service',client=self.service.client,frequency=Service.SEMIANNUAL,vercel_project_id='prj_new').exists())
+ def test_saved_client_can_be_edited_without_recreation(self):
+  http=HttpClient();http.force_login(__import__('django').contrib.auth.get_user_model().objects.create_user('editor','editor@example.test','safe-password'))
+  response=http.patch('/api/clients/{}/'.format(self.service.client_id),{'business_name':'Updated business','contact_name':'Updated contact','email':'updated@example.test','phone':'555','notes':'Updated','active':False},content_type='application/json')
+  self.assertEqual(response.status_code,200);self.service.client.refresh_from_db()
+  self.assertEqual(self.service.client.business_name,'Updated business');self.assertFalse(self.service.client.active)
 class VercelConcurrencyTests(TransactionTestCase):
  def test_two_reconcilers_claim_once(self):
   client=Client.objects.create(business_name='C',contact_name='C',email='c@test');service=Service.objects.create(client=client,name='S',domain='s.test',amount=1,frequency='monthly',start_date=date(2024,1,1),next_due_date=date(2024,1,1),vercel_project_id='prj_concurrent');Charge.objects.create(service=service,client=client,description='S',period_start=date(2024,1,1),period_end=date(2024,1,31),amount=1,due_date=date(2024,1,1),suspension_at=timezone.now(),public_reference='CONCURRENT');action=ProviderAction.objects.create(service=service,action='suspend',status=ProviderAction.PENDING,system_suspension=True);provider=SimulatedProvider();barrier=threading.Barrier(2)
