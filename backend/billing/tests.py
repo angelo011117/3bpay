@@ -18,6 +18,11 @@ class BillingRulesTests(TestCase):
   generate_charges(timezone.make_aware(datetime(2024,2,1),ZoneInfo('America/New_York')));return Charge.objects.get(service=self.service)
  def test_short_month_and_idempotency(self):
   c=self.charge();self.service.refresh_from_db();self.assertEqual(c.period_end,date(2024,2,28));self.assertEqual(self.service.next_due_date,date(2024,2,29));generate_charges(timezone.make_aware(datetime(2024,2,1),ZoneInfo('America/New_York')));self.assertEqual(Charge.objects.count(),1)
+ def test_semiannual_cycle_keeps_calendar_anchor(self):
+  self.service.frequency=Service.SEMIANNUAL;self.service.next_due_date=date(2024,1,31);self.service.save()
+  generate_charges(timezone.make_aware(datetime(2024,2,1),ZoneInfo('America/New_York')))
+  charge=Charge.objects.get(service=self.service);self.service.refresh_from_db()
+  self.assertEqual(charge.period_end,date(2024,7,30));self.assertEqual(self.service.next_due_date,date(2024,7,31))
  def test_grace_is_seven_complete_days_across_dst(self):
   self.assertEqual(suspension_time(date(2024,3,10),7),timezone.make_aware(datetime(2024,3,18),ZoneInfo('America/New_York')))
  def test_partial_payment_cannot_overallocate(self):

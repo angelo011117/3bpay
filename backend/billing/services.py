@@ -40,6 +40,8 @@ def business_now():
 def add_months(anchor, months):
     m=anchor.month-1+months; y=anchor.year+m//12; m=m%12+1
     return date(y,m,min(anchor.day,monthrange(y,m)[1]))
+def billing_cycle_months(service):
+    return {Service.MONTHLY:1,Service.SEMIANNUAL:6,Service.YEARLY:12}[service.frequency]
 def suspension_time(due, grace):
     return timezone.make_aware(datetime.combine(due+timedelta(days=grace+1),time.min),NY)
 def charge_status(charge):
@@ -52,10 +54,11 @@ def generate_charges(now=None):
         due=s.next_due_date
         if due>today: continue
         with transaction.atomic():
-            c, made=Charge.objects.get_or_create(service=s,period_start=due,defaults={'client':s.client,'description':s.name,'period_end':add_months(due,1 if s.frequency==s.MONTHLY else 12)-timedelta(days=1),'amount':s.amount,'due_date':due,'suspension_at':suspension_time(due,s.grace_days),'public_reference':secrets.token_hex(8).upper()})
+            months=billing_cycle_months(s)
+            c, made=Charge.objects.get_or_create(service=s,period_start=due,defaults={'client':s.client,'description':s.name,'period_end':add_months(due,months)-timedelta(days=1),'amount':s.amount,'due_date':due,'suspension_at':suspension_time(due,s.grace_days),'public_reference':secrets.token_hex(8).upper()})
             if made: count+=1
             # Preserve the original calendar anchor: the next date derives from the prior due date, never payment date.
-            s.next_due_date=add_months(due,1 if s.frequency==s.MONTHLY else 12); s.save(update_fields=['next_due_date'])
+            s.next_due_date=add_months(due,months); s.save(update_fields=['next_due_date'])
     return count
 def apply_payment(payment, charge, amount):
     amount=Decimal(str(amount))

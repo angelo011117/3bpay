@@ -1,5 +1,6 @@
 'use client';
 import {useState} from 'react';
+import PageHero from '../../components/PageHero';
 
 function safeDestination(){
  const next=new URLSearchParams(window.location.search).get('next');
@@ -21,5 +22,5 @@ export default function Login(){
   }catch(error){setError('Unable to contact the sign-in service. Check your connection and try again.');}
   finally{setSubmitting(false);}
  }
- return <main className="max-w-sm mx-auto mt-24 card"><h1 className="text-2xl font-bold">3B Smart Solutions</h1><p className="muted">Administrator sign in</p><label className="sr-only" htmlFor="username">Username</label><input id="username" className="border p-2 w-full my-2" autoComplete="username" placeholder="Username" onChange={event=>setUsername(event.target.value)}/><label className="sr-only" htmlFor="password">Password</label><input id="password" className="border p-2 w-full my-2" type="password" autoComplete="current-password" placeholder="Password" onChange={event=>setPassword(event.target.value)}/>{error&&<p className="text-red-600" role="alert">{error}</p>}<button className="btn w-full" type="button" disabled={submitting} onClick={signIn}>{submitting?'Signing in…':'Sign in'}</button></main>;
+ return <main className="max-w-xl mx-auto p-6"><PageHero compact title="Administrator sign in" subtitle="Secure billing operations for 3B Smart Solutions."/><section className="card"><label className="sr-only" htmlFor="username">Username</label><input id="username" className="border p-2 w-full my-2" autoComplete="username" placeholder="Username" onChange={event=>setUsername(event.target.value)}/><label className="sr-only" htmlFor="password">Password</label><input id="password" className="border p-2 w-full my-2" type="password" autoComplete="current-password" placeholder="Password" onChange={event=>setPassword(event.target.value)}/>{error&&<p className="text-red-600" role="alert">{error}</p>}<button className="btn w-full" type="button" disabled={submitting} onClick={signIn}>{submitting?'Signing in…':'Sign in'}</button></section></main>;
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import {useEffect,useState} from 'react';
+import PageHero from '../../../components/PageHero';
 
 function CopyButton({label,value}){
  const [message,setMessage]=useState('');
@@ -31,7 +32,7 @@ export default function Portal({params}){
  useEffect(()=>{params.then(({token})=>fetch(`/api/public/${token}/`).then(response=>response.json()).then(setDetails))},[params]);
  if(!details)return <main className="p-8">Loading secure payment details…</main>;
  const contact=details.zelle_recipient||'Contact 3B Smart Solutions';
- return <main className="max-w-xl mx-auto p-4 sm:p-6"><div className="card">
+ return <main className="max-w-xl mx-auto p-4 sm:p-6"><PageHero compact title={details.brand||'Payment details'} subtitle="Secure payment information"/><div className="card">
   <h1 className="text-2xl font-bold">{details.brand}</h1><p>{details.description} · {details.domain}</p><hr className="my-4"/>
   <p>Period: {details.period}</p>
   <PaymentValue label="Amount" value={`$${details.amount}`} copyValue={String(details.amount)}/>
