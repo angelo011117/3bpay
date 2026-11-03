@@ -6,18 +6,27 @@ from django.utils import timezone
 from .models import GraphSyncState,GraphMessage,Payment
 from .amex_parser import parse_amex_zelle
 PARSER_VERSION='amex-html-v1'
+def candidate_reason(message):
+ """Return a safe classification reason, or None for an AmEx deposit candidate."""
+ sender=(message.sender or '').strip().lower()
+ text=((message.subject or '')+' '+(message.body_excerpt or '')).lower()
+ domain=sender.rsplit('@',1)[-1] if '@' in sender else ''
+ if domain!='americanexpress.com': return 'Sender is not the trusted American Express domain'
+ if 'zelle' not in text: return 'American Express message is not a Zelle notification'
+ if not any(x in text for x in ('deposit','deposited','received')): return 'Zelle notification is not a deposit event'
+ return None
 def is_candidate(message):
- sender=(message.sender or '').lower(); subject=(message.subject or '').lower(); preview=(message.body_excerpt or '').lower()
- return sender.endswith('americanexpress.com') and 'zelle' in (subject+' '+preview) and any(x in (subject+' '+preview) for x in ('deposit','deposited','received'))
+ return candidate_reason(message) is None
 def fetch_message(token,graph_id):
  base=f"https://graph.microsoft.com/v1.0/users/{urllib.parse.quote(settings.MICROSOFT_GRAPH_MAILBOX)}/messages/{urllib.parse.quote(graph_id)}?$select=id,body,from,subject,receivedDateTime,internetMessageHeaders"
  return request(base,token=token)
-def classify_existing():
+def classify_existing(statuses=None):
  """Classify unrelated mail as ignored; fetch candidate bodies only, then parse idempotently."""
  if not configured():return {'ignored':0,'incidents':0,'processed':0}
  token=access_token();out={'ignored':0,'incidents':0,'processed':0}
- for msg in GraphMessage.objects.filter(status__in=['incident','review']):
-  if not is_candidate(msg):msg.status='ignored';msg.error='Not an AmEx Zelle deposit notification';msg.save(update_fields=['status','error']);out['ignored']+=1;continue
+ for msg in GraphMessage.objects.filter(status__in=statuses or ['incident','review']):
+  reason=candidate_reason(msg)
+  if reason:msg.status='ignored';msg.error='Ignored: '+reason;msg.save(update_fields=['status','error']);out['ignored']+=1;continue
   try:
    item=fetch_message(token,msg.graph_id);body=item.get('body',{});data=parse_amex_zelle(body.get('content',''))
    msg.payer_name=data['payer_name'];msg.recipient_account=data['recipient_account'];msg.transaction_id=data['transaction_id'];msg.amount=data['amount'];msg.body_excerpt=data['evidence'];msg.status='review';msg.error=f'Parsed by {PARSER_VERSION}';msg.save()
@@ -52,6 +61,9 @@ def sync():
     if item.get('@removed') or not item.get('id'): continue
     msg,created=GraphMessage.objects.get_or_create(graph_id=item['id'],defaults={'received_at':item['receivedDateTime'],'sender':item.get('from',{}).get('emailAddress',{}).get('address',''),'subject':item.get('subject',''),'body_excerpt':item.get('bodyPreview','')[:1000]})
     if created:
+     reason=candidate_reason(msg)
+     if reason:
+      msg.status='ignored';msg.error='Ignored: '+reason;msg.save(update_fields=['status','error']);continue
      try:
       data=parse_amex_zelle(item.get('body',{}).get('content',''));msg.payer_name=data['payer_name'];msg.recipient_account=data['recipient_account'];msg.transaction_id=data['transaction_id'];msg.amount=data['amount'];msg.body_excerpt=data['evidence'];msg.save()
       payment=Payment.objects.create(amount=data['amount'],payer_name=data['payer_name'],recipient_account=data['recipient_account'],transaction_id=data['transaction_id'],source='graph',notes=f'Graph message {item["id"]}',status=Payment.REVIEW);msg.payment=payment;msg.save(update_fields=['payment'])

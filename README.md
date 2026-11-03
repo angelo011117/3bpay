@@ -147,10 +147,10 @@ It may read Graph only after `MICROSOFT_GRAPH_ENABLED=true` is deliberately conf
 
 ### 5. Backups, restore checks, updates and rollback
 
-The backup script creates a PostgreSQL custom-format dump plus media archive, SHA-256 checksums, and configurable retention. Example daily cron (run as the deploy user):
+The backup script creates a PostgreSQL custom-format dump plus media archive, SHA-256 checksums, and configurable retention. Install the idempotent daily 03:00 America/New_York job as the deploy user:
 
 ```cron
-15 2 * * * BACKUP_RETENTION_DAYS=14 /opt/3bpay/deploy/backup.sh >> /opt/3bpay/backups/backup.log 2>&1
+./deploy/enable-backup-cron.sh
 ```
 
 Test every backup in an isolated disposable PostgreSQL container; it does not touch the production database or volumes:

@@ -1,0 +1,16 @@
+[Unit]
+Description=3BPay PostgreSQL and media backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=tbsmart
+Group=tbsmart
+WorkingDirectory=/opt/3bpay
+Environment=THREEBPAY_ROOT=/opt/3bpay
+Environment=BACKUP_RETENTION_DAYS=14
+UMask=0077
+ExecStart=/bin/bash /opt/3bpay/deploy/backup.sh
+StandardOutput=journal
+StandardError=journal

@@ -12,6 +12,12 @@ test -f "$COMPOSE_FILE"
 case "$BACKUP_DIR" in /|"") echo 'Refusing unsafe BACKUP_DIR' >&2; exit 2;; esac
 set -a; . "$ENV_FILE"; set +a
 umask 077
+mkdir -p "$BACKUP_DIR"
+exec 9>"$BACKUP_DIR/.backup.lock"
+if ! flock -n 9; then
+  echo 'Backup skipped: another backup is already running.'
+  exit 0
+fi
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 target="$BACKUP_DIR/$stamp"
 mkdir -p "$target"

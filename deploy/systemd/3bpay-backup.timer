@@ -1,0 +1,10 @@
+[Unit]
+Description=Run 3BPay backup daily at 03:00 America/New_York
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/New_York
+Persistent=true
+Unit=3bpay-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -6,7 +6,9 @@ export async function middleware(request){
  const path=request.nextUrl.pathname;
  if(!protectedPaths.some(prefix=>path===prefix||path.startsWith(prefix+'/')))return NextResponse.next();
  try{
-  const response=await fetch('http://backend:8000/api/session/',{headers:{cookie:request.headers.get('cookie')||'',host:request.headers.get('host')||'localhost'},cache:'no-store'});
+  // The browser reaches us through the TLS-terminating proxy. Preserve that
+  // scheme for this internal session probe so Django does not SSL-redirect it.
+  const response=await fetch('http://backend:8000/api/session/',{headers:{cookie:request.headers.get('cookie')||'',host:request.headers.get('host')||'localhost','x-forwarded-proto':'https','x-forwarded-host':request.headers.get('host')||'localhost'},cache:'no-store'});
   if(response.ok)return NextResponse.next();
  }catch{}
  const login=new URL('/login',request.url);
